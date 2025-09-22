@@ -150,7 +150,12 @@ export const useGridExcelExport = (
         const serializedRow = serializeRowUnsafe(id, exportedColumns, apiRef, valueOptionsData, {
           escapeFormulas: options.escapeFormulas ?? true,
         });
-        serializedRows.push(serializedRow);
+        if (Array.isArray(serializedRow)) {
+          serializedRow.forEach((row) => serializedRows.push(row));
+        } else {
+          serializedRows.push(serializedRow);
+        }
+        // serializedRows.push(serializedRow);
       }
       apiRef.current.resetColSpan();
 
