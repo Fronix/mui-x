@@ -275,10 +275,16 @@ export interface GridBaseColDef<R extends GridValidRowModel = GridValidRowModel,
    */
   disableReorder?: boolean;
   /**
+   * If `true`, this column is a child column
+   * If true, the column is considered a child column and will be exported as part of the parent group.
+   */
+  isExportChildColumn?: boolean;
+  /**
    * If `true`, this column will not be included in exports.
    * @default false
    */
   disableExport?: boolean;
+
   /**
    * Number of columns a cell should span.
    * @default 1
