@@ -441,6 +441,7 @@ interface BuildExcelOptions
   columns: GridStateColDef[];
   rowIds: GridRowId[];
   columnsStyles?: ColumnsStylesInterface;
+  customSerializeColumns?: typeof serializeColumns;
 }
 
 export async function buildExcel(
@@ -455,6 +456,7 @@ export async function buildExcel(
     valueOptionsSheetName = 'Options',
     exceljsPreProcess,
     exceljsPostProcess,
+    customSerializeColumns,
     columnsStyles = {},
   } = options;
 
@@ -462,7 +464,9 @@ export async function buildExcel(
   const workbook: Excel.Workbook = new excelJS.Workbook();
   const worksheet = workbook.addWorksheet('Sheet1');
 
-  const serializedColumns = serializeColumns(columns, columnsStyles);
+  const serializedColumns = customSerializeColumns
+    ? customSerializeColumns(columns, columnsStyles)
+    : serializeColumns(columns, columnsStyles);
   worksheet.columns = serializedColumns;
 
   if (exceljsPreProcess) {
