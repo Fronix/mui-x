@@ -295,6 +295,7 @@ export const serializeRowUnsafe = (
       dataValidation: {},
       outlineLevel: rowNode.depth + 1,
       mergedCells: [],
+      isChildHeader: true,
     });
 
     // --- THIS IS THE IMPORTANT PART ---
