@@ -11,6 +11,7 @@ export type GridExportExtension = GridExportExtensionCommunity | 'xlsx';
 export interface GridExceljsProcessInput {
   workbook: Excel.Workbook;
   worksheet: Excel.Worksheet;
+  context?: GridExcelExportOptions['context'];
 }
 
 export interface ColumnsStylesInterface {
@@ -58,6 +59,11 @@ export interface GridExcelExportOptions extends GridFileExportOptions {
    * @default true
    */
   includeColumnGroupsHeaders?: boolean;
+  /**
+   * Any data you want to be available in `exceljsPreProcess` and `exceljsPostProcess` functions.
+   * Note that this data must be cloneable, as it is transferred to a web worker if the `worker` option is provided.
+   */
+  context?: any;
 }
 
 /**

@@ -37,7 +37,7 @@ export function setupExcelExportWebWorker(
     worksheet.columns = serializedColumns;
 
     if (exceljsPreProcess) {
-      await exceljsPreProcess({ workbook, worksheet });
+      await exceljsPreProcess({ workbook, worksheet, context: options.context });
     }
 
     if (options.includeColumnGroupsHeaders) {
@@ -56,7 +56,7 @@ export function setupExcelExportWebWorker(
     });
 
     if (exceljsPostProcess) {
-      await exceljsPostProcess({ workbook, worksheet });
+      await exceljsPostProcess({ workbook, worksheet, context: options.context });
     }
 
     postMessage(await workbook.xlsx.writeBuffer());
