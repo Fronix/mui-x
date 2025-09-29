@@ -109,9 +109,6 @@ export function addSerializedRowToWorksheet(
       if (cell.value === null || cell.value === undefined || cell.value === '') {
         return;
       }
-      cell.border = {
-        top: { style: 'thin', color: { argb: 'FF000000' } },
-      };
       cell.font = {
         color: { argb: '00000000' },
         bold: true,
