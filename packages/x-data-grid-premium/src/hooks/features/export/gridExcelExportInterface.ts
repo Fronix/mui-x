@@ -4,6 +4,7 @@ import {
   GridExportFormat as GridExportFormatCommunity,
   GridExportExtension as GridExportExtensionCommunity,
 } from '@mui/x-data-grid-pro';
+import { serializeColumns } from './serializer/excelSerializer';
 
 export type GridExportFormat = GridExportFormatCommunity | 'excel';
 export type GridExportExtension = GridExportExtensionCommunity | 'xlsx';
@@ -11,6 +12,7 @@ export type GridExportExtension = GridExportExtensionCommunity | 'xlsx';
 export interface GridExceljsProcessInput {
   workbook: Excel.Workbook;
   worksheet: Excel.Worksheet;
+  context?: GridExcelExportOptions['context'];
 }
 
 export interface ColumnsStylesInterface {
@@ -58,6 +60,19 @@ export interface GridExcelExportOptions extends GridFileExportOptions {
    * @default true
    */
   includeColumnGroupsHeaders?: boolean;
+  /**
+   * Any data you want to be available in `exceljsPreProcess` and `exceljsPostProcess` functions.
+   * Note that this data must be cloneable, as it is transferred to a web worker if the `worker` option is provided.
+   */
+  context?: any;
+  /**
+   * Custom serialization function for the columns.
+   * If not provided, the default `serializeColumns` function will be used.
+   * @param {GridStateColDef[]} columns The columns to serialize.
+   * @param {ColumnsStylesInterface} columnsStyles The styles to apply to the columns.
+   * @returns {Partial<Excel.Column>[]} The serialized columns.
+   */
+  customSerializeColumns?: typeof serializeColumns;
 }
 
 /**

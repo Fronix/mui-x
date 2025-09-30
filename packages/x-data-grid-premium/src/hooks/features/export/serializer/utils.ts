@@ -12,6 +12,7 @@ export interface SerializedRow {
   dataValidation: Record<string, Excel.DataValidation>;
   outlineLevel: number;
   mergedCells: { leftIndex: number; rightIndex: number }[];
+  isChildHeader?: boolean;
 }
 
 export const addColumnGroupingHeaders = (
@@ -82,7 +83,7 @@ export function addSerializedRowToWorksheet(
   serializedRow: SerializedRow,
   worksheet: Excel.Worksheet,
 ) {
-  const { row, dataValidation, outlineLevel, mergedCells } = serializedRow;
+  const { row, dataValidation, outlineLevel, mergedCells, isChildHeader } = serializedRow;
 
   const newRow = worksheet.addRow(row);
 
@@ -101,6 +102,19 @@ export function addSerializedRowToWorksheet(
   mergedCells.forEach((mergedCell) => {
     worksheet.mergeCells(lastRowIndex, mergedCell.leftIndex, lastRowIndex, mergedCell.rightIndex);
   });
+
+  // We hardcode this here for now, we can think about making it configurable later if needed
+  if (isChildHeader) {
+    newRow.eachCell((cell) => {
+      if (cell.value === null || cell.value === undefined || cell.value === '') {
+        return;
+      }
+      cell.font = {
+        color: { argb: '00000000' },
+        bold: true,
+      };
+    });
+  }
 }
 
 export async function createValueOptionsSheetIfNeeded(

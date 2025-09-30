@@ -85,7 +85,7 @@ const main = async () => {
   );
 
   log('Cleaning old vendor directories.');
-  await Promise.all(cleanGlobs.map((glob) => rimraf(glob)));
+  await Promise.all(cleanGlobs.map((glob) => rimraf(glob, { glob: true })));
   log('Creating empty vendor directories.');
   await Promise.all(baseDirs.map((libPath) => fs.mkdir(libPath, { recursive: true })));
 
