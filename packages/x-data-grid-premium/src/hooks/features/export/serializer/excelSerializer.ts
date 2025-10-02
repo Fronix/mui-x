@@ -264,6 +264,10 @@ export const serializeRowUnsafe = (
       dataValidation: {},
       outlineLevel: rowNode.depth,
       mergedCells: [],
+      // Add border styling for parent rows followed by child rows
+      borderStyle: {
+        bottom: { style: 'thin' },
+      },
     });
 
     // Insert child block after the first parent column
