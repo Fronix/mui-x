@@ -1,5 +1,5 @@
 import type * as Excel from 'exceljs';
-import type { GridColumnGroupLookup } from '@mui/x-data-grid/internals';
+import type { GridColumnGroupLookup, GridStateColDef } from '@mui/x-data-grid/internals';
 import type { GridExcelExportOptions } from '../gridExcelExportInterface';
 
 export const getExcelJs = async () => {
@@ -7,12 +7,37 @@ export const getExcelJs = async () => {
   return excelJsModule.default ?? excelJsModule;
 };
 
+export function configureOutlineLevels(
+  worksheet: Excel.Worksheet,
+  columns: GridStateColDef[],
+  outlineLevel: number,
+) {
+  if (outlineLevel > 0) {
+    // For child rows, configure which columns are visible
+    const childColumns = columns.filter((col) => col.isExportChildColumn);
+    const parentColumns = columns.filter((col) => !col.isExportChildColumn);
+
+    // Hide parent columns for child outline levels
+    parentColumns.forEach((col) => {
+      const column = worksheet.getColumn(col.field);
+      column.outlineLevel = 0;
+    });
+
+    // Show child columns for child outline levels
+    childColumns.forEach((col) => {
+      const column = worksheet.getColumn(col.field);
+      column.outlineLevel = outlineLevel;
+    });
+  }
+}
+
 export interface SerializedRow {
   row: Record<string, undefined | number | boolean | string | Date>;
   dataValidation: Record<string, Excel.DataValidation>;
   outlineLevel: number;
   mergedCells: { leftIndex: number; rightIndex: number }[];
   isChildHeader?: boolean;
+  borderStyle?: Partial<Excel.Borders>;
 }
 
 export const addColumnGroupingHeaders = (
@@ -95,6 +120,17 @@ export function addSerializedRowToWorksheet(
 
   if (outlineLevel) {
     newRow.outlineLevel = outlineLevel;
+
+    if (outlineLevel > 0) {
+      newRow.hidden = true;
+    }
+  }
+
+  if (!worksheet.properties.outlineProperties) {
+    worksheet.properties.outlineProperties = {
+      summaryBelow: false,
+      summaryRight: false,
+    };
   }
 
   // use `rowCount`, since worksheet can have additional rows added in `exceljsPreProcess`
@@ -112,6 +148,14 @@ export function addSerializedRowToWorksheet(
       cell.font = {
         color: { argb: '00000000' },
         bold: true,
+      };
+    });
+  }
+  if (serializedRow.borderStyle) {
+    newRow.eachCell((cell) => {
+      cell.border = {
+        ...cell.border,
+        ...serializedRow.borderStyle,
       };
     });
   }
