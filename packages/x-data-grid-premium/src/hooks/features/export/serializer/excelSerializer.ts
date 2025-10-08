@@ -232,137 +232,88 @@ export const serializeRowUnsafe = (
   });
 
   /**
-   * This will create a block like this:
-   * | Parent 1 | Parent 2 |               |
-   * |----------|----------|---------------|
-   * |          | Child 1  | Child 2       |
-   * |          | val1     | val2          |
-   * |          | val1     | val2          |
+   * New approach: Flatten parent-child structure
+   * For each child row, duplicate the parent data and add child data on the same level
+   *
+   * Example:
+   * | Parent 1 | Parent 2 | Child 1 | Child 2 |
+   * | data1    | data2    | child1  | child2  |
+   * | data1    | data2    | child3  | child4  |
+   * | data1    | data2    | child5  | child6  |
    */
   if (childColumns.length > 0) {
     const rows: SerializedRow[] = [];
 
-    // Calculate how many columns we need total
-    const minParentColumns = 1; // Always need at least one parent column
-    const requiredColumns = minParentColumns + childColumns.length;
-
-    // If we don't have enough parent columns to accommodate all child columns,
-    // we need to add fake parent columns to ensure all child columns are exported
-    const effectiveParentColumns = [...parentColumns];
-    const columnsToAdd = Math.max(0, requiredColumns - effectiveParentColumns.length);
-
-    // Add fake parent columns if needed
-    if (columnsToAdd > 0) {
-      for (let i = 0; i < columnsToAdd; i += 1) {
-        const fakeColumn: GridStateColDef = {
-          field: `__fake_parent_${i}__`,
-          headerName: '',
-          type: 'string',
-          width: 100,
-          isExportChildColumn: false,
-        } as GridStateColDef;
-        effectiveParentColumns.push(fakeColumn);
-      }
-    }
-
-    // Insert child block after the first parent column
-    const childInsertIdx = 1;
-
-    // Helper to build a row: blanks, then child columns, then blanks to fill to effectiveColumns.length
-    function buildChildRow(childValues: Record<string, any>) {
-      const rowObj: SerializedRow['row'] = {};
-
-      // First, handle the original columns structure to maintain proper positioning
-      columns.forEach((col) => {
-        if (col.isExportChildColumn) {
-          // This is a child column - add its value
-          rowObj[col.field] = childValues[col.field] ?? '';
-        } else {
-          // This is a parent column - leave empty for child rows
-          rowObj[col.field] = '';
-        }
-      });
-
-      // Then, add any fake parent columns we created
-      effectiveParentColumns.forEach((col) => {
-        if (col.field.startsWith('__fake_parent_')) {
-          rowObj[col.field] = '';
-        }
-      });
-
-      return rowObj;
-    }
-
-    // Add parent row with bottom border across ALL columns
-    const parentRowWithBlanks = buildChildRow({});
-
-    // Override with actual parent values for real parent columns only
-    parentColumns.forEach((col) => {
-      parentRowWithBlanks[col.field] = getSerializedCellValue(
-        row,
-        col,
-        columns.indexOf(col),
-        id,
-        apiRef,
-        defaultValueOptionsFormulae,
-        options,
-        dataValidation,
-        mergedCells,
-        hasColSpan,
-      );
-    });
-
-    // Check if parent row has any non-empty values (headers exist)
-    const hasParentData = parentColumns.some(
-      (col) => parentRowWithBlanks[col.field] != null && parentRowWithBlanks[col.field] !== '',
-    );
-
-    const parentRowData: SerializedRow = {
-      row: parentRowWithBlanks,
-      dataValidation: {},
-      outlineLevel: rowNode.depth,
-      mergedCells: [],
-    };
-
-    // Add border if parent row has data (corresponding headers exist)
-    if (hasParentData) {
-      parentRowData.borderStyle = {
-        bottom: { style: 'thin' },
-      };
-    }
-
-    rows.push(parentRowData);
-
-    // Child header row: shift by childInsertIdx, then child headers
-    const childHeaderValues: Record<string, any> = {};
-    childColumns.forEach((col) => {
-      childHeaderValues[col.field] = col.headerName ?? col.field;
-    });
-    rows.push({
-      row: buildChildRow(childHeaderValues),
-      dataValidation: {},
-      outlineLevel: rowNode.depth + 1,
-      mergedCells: [],
-      isChildHeader: true,
-    });
-
-    // --- THIS IS THE IMPORTANT PART ---
-    // Find the array field used by the child columns (e.g. "childData")
+    // Find the array field used by the child columns (e.g. "verksamhetsInnehall")
     const arrayField = childColumns[0].field.split('.')[0];
     const childArray = Array.isArray(row[arrayField]) ? row[arrayField] : [];
 
-    // For each child item, output a row
-    for (let i = 0; i < childArray.length; i += 1) {
-      const childRowValues: Record<string, any> = {};
-      const childRow = childArray[i];
+    // If there are no child rows, just export the parent row
+    if (childArray.length === 0) {
+      const parentRow: SerializedRow['row'] = {};
+
+      // Add parent columns
+      parentColumns.forEach((col) => {
+        parentRow[col.field] = getSerializedCellValue(
+          row,
+          col,
+          columns.indexOf(col),
+          id,
+          apiRef,
+          defaultValueOptionsFormulae,
+          options,
+          dataValidation,
+          mergedCells,
+          hasColSpan,
+        );
+      });
+
+      // Add empty child columns
       childColumns.forEach((col) => {
-        // If the field is dot-notated, use only the last part for the child row or serializedCellValue gets confused
+        parentRow[col.field] = '';
+      });
+
+      return {
+        row: parentRow,
+        dataValidation,
+        outlineLevel,
+        mergedCells,
+        borderStyle: {
+          bottom: { style: 'thin' },
+        },
+      };
+    }
+
+    // For each child row, create a complete row with parent + child data
+    for (let i = 0; i < childArray.length; i += 1) {
+      const combinedRow: SerializedRow['row'] = {};
+      const childRowData = childArray[i];
+
+      // Add parent columns (same data for each child row)
+      parentColumns.forEach((col) => {
+        combinedRow[col.field] = getSerializedCellValue(
+          row,
+          col,
+          columns.indexOf(col),
+          id,
+          apiRef,
+          defaultValueOptionsFormulae,
+          options,
+          dataValidation,
+          mergedCells,
+          hasColSpan,
+        );
+      });
+
+      // Add child columns (specific data for this child row)
+      childColumns.forEach((col) => {
+        // If the field is dot-notated, use only the last part for the child row
         const fieldParts = col.field.split('.');
         const childField = fieldParts[fieldParts.length - 1];
         const patchedCol = { ...col, field: childField };
 
         const cellValue = getSerializedCellValue(
-          childRow,
+          childRowData,
           patchedCol,
           columns.indexOf(col),
           id,
@@ -373,12 +324,13 @@ export const serializeRowUnsafe = (
           mergedCells,
           hasColSpan,
         );
-        childRowValues[col.field] = cellValue ?? '';
+        combinedRow[col.field] = cellValue ?? '';
       });
+
       rows.push({
-        row: buildChildRow(childRowValues),
+        row: combinedRow,
         dataValidation: {},
-        outlineLevel: rowNode.depth + 1,
+        outlineLevel: rowNode.depth,
         mergedCells: [],
       });
     }
@@ -540,8 +492,8 @@ export async function buildExcel(
   }
 
   if (includeHeaders) {
-    const parentColumns = columns.filter((col) => !col.isExportChildColumn);
-    worksheet.addRow(parentColumns.map((column) => column.headerName ?? column.field));
+    // Add headers for ALL columns (parent + child)
+    worksheet.addRow(columns.map((column) => column.headerName ?? column.field));
   }
 
   const valueOptionsData = await getDataForValueOptionsSheet(
