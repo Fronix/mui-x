@@ -242,52 +242,96 @@ export const serializeRowUnsafe = (
   if (childColumns.length > 0) {
     const rows: SerializedRow[] = [];
 
-    // Add parent row
-    rows.push({
-      row: Object.fromEntries(
-        parentColumns.map((col) => [
-          col.field,
-          getSerializedCellValue(
-            row,
-            col,
-            columns.indexOf(col),
-            id,
-            apiRef,
-            defaultValueOptionsFormulae,
-            options,
-            dataValidation,
-            mergedCells,
-            hasColSpan,
-          ),
-        ]),
-      ),
-      dataValidation: {},
-      outlineLevel: rowNode.depth,
-      mergedCells: [],
-      // Add border styling for parent rows followed by child rows
-      borderStyle: {
-        bottom: { style: 'thin' },
-      },
-    });
+    // Calculate how many columns we need total
+    const minParentColumns = 1; // Always need at least one parent column
+    const requiredColumns = minParentColumns + childColumns.length;
+
+    // If we don't have enough parent columns to accommodate all child columns,
+    // we need to add fake parent columns to ensure all child columns are exported
+    const effectiveParentColumns = [...parentColumns];
+    const columnsToAdd = Math.max(0, requiredColumns - effectiveParentColumns.length);
+
+    // Add fake parent columns if needed
+    if (columnsToAdd > 0) {
+      for (let i = 0; i < columnsToAdd; i += 1) {
+        const fakeColumn: GridStateColDef = {
+          field: `__fake_parent_${i}__`,
+          headerName: '',
+          type: 'string',
+          width: 100,
+          isExportChildColumn: false,
+        } as GridStateColDef;
+        effectiveParentColumns.push(fakeColumn);
+      }
+    }
 
     // Insert child block after the first parent column
     const childInsertIdx = 1;
 
-    // Helper to build a row: blanks, then child columns, then blanks to fill to columns.length
+    // Helper to build a row: blanks, then child columns, then blanks to fill to effectiveColumns.length
     function buildChildRow(childValues: Record<string, any>) {
       const rowObj: SerializedRow['row'] = {};
-      columns.forEach((col, idx) => {
-        if (idx < childInsertIdx) {
-          rowObj[col.field] = '';
-        } else if (idx >= childInsertIdx && idx < childInsertIdx + childColumns.length) {
-          const childCol = childColumns[idx - childInsertIdx];
-          rowObj[col.field] = childValues[childCol.field] ?? '';
+
+      // First, handle the original columns structure to maintain proper positioning
+      columns.forEach((col) => {
+        if (col.isExportChildColumn) {
+          // This is a child column - add its value
+          rowObj[col.field] = childValues[col.field] ?? '';
         } else {
+          // This is a parent column - leave empty for child rows
           rowObj[col.field] = '';
         }
       });
+
+      // Then, add any fake parent columns we created
+      effectiveParentColumns.forEach((col) => {
+        if (col.field.startsWith('__fake_parent_')) {
+          rowObj[col.field] = '';
+        }
+      });
+
       return rowObj;
     }
+
+    // Add parent row with bottom border across ALL columns
+    const parentRowWithBlanks = buildChildRow({});
+
+    // Override with actual parent values for real parent columns only
+    parentColumns.forEach((col) => {
+      parentRowWithBlanks[col.field] = getSerializedCellValue(
+        row,
+        col,
+        columns.indexOf(col),
+        id,
+        apiRef,
+        defaultValueOptionsFormulae,
+        options,
+        dataValidation,
+        mergedCells,
+        hasColSpan,
+      );
+    });
+
+    // Check if parent row has any non-empty values (headers exist)
+    const hasParentData = parentColumns.some(
+      (col) => parentRowWithBlanks[col.field] != null && parentRowWithBlanks[col.field] !== '',
+    );
+
+    const parentRowData: SerializedRow = {
+      row: parentRowWithBlanks,
+      dataValidation: {},
+      outlineLevel: rowNode.depth,
+      mergedCells: [],
+    };
+
+    // Add border if parent row has data (corresponding headers exist)
+    if (hasParentData) {
+      parentRowData.borderStyle = {
+        bottom: { style: 'thin' },
+      };
+    }
+
+    rows.push(parentRowData);
 
     // Child header row: shift by childInsertIdx, then child headers
     const childHeaderValues: Record<string, any> = {};
