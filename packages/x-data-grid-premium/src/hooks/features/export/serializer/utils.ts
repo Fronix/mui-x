@@ -1,4 +1,7 @@
-import type { GridColumnGroupLookup } from "@mui/x-data-grid/internals";
+import type {
+	GridColumnGroupLookup,
+	GridStateColDef,
+} from "@mui/x-data-grid/internals";
 import type * as Excel from "@mui/x-internal-exceljs-fork";
 import type { GridExcelExportOptions } from "../gridExcelExportInterface";
 
