@@ -62,6 +62,126 @@ const getFormattedValueOptions = (
 const commaRegex = /,/g;
 const commaReplacement = 'CHAR(44)';
 
+function getSerializedCellValue(
+  row: any,
+  column: GridStateColDef,
+  colIndex: number,
+  id: GridRowId,
+  apiRef: RefObject<GridPrivateApiPremium>,
+  defaultValueOptionsFormulae: { [field: string]: { address: string } },
+  options: Pick<BuildExcelOptions, 'escapeFormulas'>,
+  dataValidation: SerializedRow['dataValidation'],
+  mergedCells: SerializedRow['mergedCells'],
+  hasColSpan: boolean,
+) {
+  const api = apiRef.current;
+  let cellValue: any;
+
+  const colSpanInfo = hasColSpan ? api.unstable_getCellColSpanInfo(id, colIndex) : undefined;
+  if (colSpanInfo && colSpanInfo.spannedByColSpan) {
+    return undefined;
+  }
+  if (colSpanInfo && colSpanInfo.cellProps.colSpan > 1) {
+    mergedCells.push({
+      leftIndex: colIndex + 1,
+      rightIndex: colIndex + colSpanInfo.cellProps.colSpan,
+    });
+  }
+
+  switch (column.type) {
+    case 'singleSelect': {
+      const castColumn = column as GridSingleSelectColDef;
+      if (typeof castColumn.valueOptions === 'function') {
+        const valueOptions = castColumn.valueOptions({
+          id,
+          row,
+          field: column.field,
+        });
+
+        let formulae: string = '"';
+        getFormattedValueOptions(castColumn, row, valueOptions, api, (value, index) => {
+          const formatted = value.toString().replace(commaRegex, commaReplacement);
+          formulae += formatted;
+          if (index < valueOptions.length - 1) {
+            formulae += ',';
+          }
+        });
+        formulae += '"';
+
+        dataValidation[castColumn.field] = {
+          type: 'list',
+          allowBlank: true,
+          formulae: [formulae],
+        };
+      } else {
+        const address = defaultValueOptionsFormulae[column.field].address;
+        dataValidation[castColumn.field] = {
+          type: 'list',
+          allowBlank: true,
+          formulae: [address],
+        };
+      }
+
+      const formattedValue = api.getRowFormattedValue(row, castColumn);
+      if (process.env.NODE_ENV !== 'production') {
+        if (String(formattedValue) === '[object Object]') {
+          warnOnce([
+            'MUI X: When the value of a field is an object or a `renderCell` is provided, the Excel export might not display the value correctly.',
+            'You can provide a `valueFormatter` with a string representation to be used.',
+          ]);
+        }
+      }
+      if (isObject<{ label: any }>(formattedValue)) {
+        return formattedValue?.label;
+      }
+      return formattedValue as any;
+    }
+    case 'boolean':
+    case 'number':
+      cellValue = api.getRowValue(row, column);
+      break;
+    case 'date':
+    case 'dateTime': {
+      const value = api.getRowValue(row, column) as Date;
+      if (!value) {
+        break;
+      }
+      const utcDate = new Date(
+        Date.UTC(
+          value.getFullYear(),
+          value.getMonth(),
+          value.getDate(),
+          value.getHours(),
+          value.getMinutes(),
+          value.getSeconds(),
+        ),
+      );
+      return utcDate;
+    }
+    case 'actions':
+      break;
+    default:
+      cellValue = api.getRowFormattedValue(row, column);
+      if (process.env.NODE_ENV !== 'production') {
+        if (String(cellValue) === '[object Object]') {
+          warnOnce([
+            'MUI X: When the value of a field is an object or a `renderCell` is provided, the Excel export might not display the value correctly.',
+            'You can provide a `valueFormatter` with a string representation to be used.',
+          ]);
+        }
+      }
+      break;
+  }
+
+  if (typeof cellValue === 'string' && options.escapeFormulas) {
+    if (['=', '+', '-', '@', '\t', '\r'].includes(cellValue[0])) {
+      cellValue = `'${cellValue}`;
+    }
+  }
+
+  return cellValue;
+}
+
 /**
  * FIXME: This function mutates the colspan info, but colspan info assumes that the columns
  * passed to it are always consistent. In this case, the exported columns may differ from the
@@ -74,8 +194,7 @@ export const serializeRowUnsafe = (
   apiRef: RefObject<GridPrivateApiPremium>,
   defaultValueOptionsFormulae: { [field: string]: { address: string } },
   options: Pick<BuildExcelOptions, 'escapeFormulas'>,
-): SerializedRow => {
-  const serializedRow: SerializedRow['row'] = {};
+): SerializedRow | SerializedRow[] => {
   const dataValidation: SerializedRow['dataValidation'] = {};
   const mergedCells: SerializedRow['mergedCells'] = [];
 
@@ -88,138 +207,157 @@ export const serializeRowUnsafe = (
   const hasColSpan = gridHasColSpanSelector(apiRef);
 
   if (hasColSpan) {
-    // `colSpan` is only calculated for rendered rows, so we need to calculate it during export for every row
     apiRef.current.calculateColSpan(id, 0, columns.length, columns);
   }
 
-  columns.forEach((column, colIndex) => {
-    const colSpanInfo = hasColSpan
-      ? apiRef.current.unstable_getCellColSpanInfo(id, colIndex)
-      : undefined;
-    if (colSpanInfo && colSpanInfo.spannedByColSpan) {
-      return;
+  // Split columns into parent and child
+  const parentColumns = columns.filter((col) => !col.isExportChildColumn);
+  const childColumns = columns.filter((col) => col.isExportChildColumn);
+
+  // Parent row: only parent columns
+  const parentSerializedRow: SerializedRow['row'] = {};
+  parentColumns.forEach((column, colIndex) => {
+    parentSerializedRow[column.field] = getSerializedCellValue(
+      row,
+      column,
+      colIndex,
+      id,
+      apiRef,
+      defaultValueOptionsFormulae,
+      options,
+      dataValidation,
+      mergedCells,
+      hasColSpan,
+    );
+  });
+
+  /**
+   * New approach: Flatten parent-child structure
+   * For each child row, duplicate the parent data and add child data on the same level
+   *
+   * Example:
+   * | Parent 1 | Parent 2 | Child 1 | Child 2 |
+   * | data1    | data2    | child1  | child2  |
+   * | data1    | data2    | child3  | child4  |
+   * | data1    | data2    | child5  | child6  |
+   */
+  if (childColumns.length > 0) {
+    const rows: SerializedRow[] = [];
+
+    // Find the array field used by the child columns (e.g. "verksamhetsInnehall")
+    const arrayField = childColumns[0].field.split('.')[0];
+    const childArray = Array.isArray(row[arrayField]) ? row[arrayField] : [];
+
+    // If there are no child rows, just export the parent row
+    if (childArray.length === 0) {
+      const parentRow: SerializedRow['row'] = {};
+
+      // Add parent columns
+      parentColumns.forEach((col) => {
+        parentRow[col.field] = getSerializedCellValue(
+          row,
+          col,
+          columns.indexOf(col),
+          id,
+          apiRef,
+          defaultValueOptionsFormulae,
+          options,
+          dataValidation,
+          mergedCells,
+          hasColSpan,
+        );
+      });
+
+      // Add empty child columns
+      childColumns.forEach((col) => {
+        parentRow[col.field] = '';
+      });
+
+      return {
+        row: parentRow,
+        dataValidation,
+        outlineLevel,
+        mergedCells,
+        borderStyle: {
+          bottom: { style: 'thin' },
+        },
+      };
     }
-    if (colSpanInfo && colSpanInfo.cellProps.colSpan > 1) {
-      mergedCells.push({
-        leftIndex: colIndex + 1,
-        rightIndex: colIndex + colSpanInfo.cellProps.colSpan,
+
+    // For each child row, create a complete row with parent + child data
+    for (let i = 0; i < childArray.length; i += 1) {
+      const combinedRow: SerializedRow['row'] = {};
+      const childRowData = childArray[i];
+
+      // Add parent columns (same data for each child row)
+      parentColumns.forEach((col) => {
+        combinedRow[col.field] = getSerializedCellValue(
+          row,
+          col,
+          columns.indexOf(col),
+          id,
+          apiRef,
+          defaultValueOptionsFormulae,
+          options,
+          dataValidation,
+          mergedCells,
+          hasColSpan,
+        );
+      });
+
+      // Add child columns (specific data for this child row)
+      childColumns.forEach((col) => {
+        // If the field is dot-notated, use the path after the array field
+        const fieldParts = col.field.split('.');
+        const arrayFieldIndex = fieldParts.indexOf(arrayField);
+
+        // Get the nested path after the array field (e.g., "something.nested" from "verksamhetsInnehall.something.nested")
+        const nestedPath = fieldParts.slice(arrayFieldIndex + 1).join('.');
+
+        // Create a patched column with the nested path as the field
+        const patchedCol = { ...col, field: nestedPath };
+
+        const cellValue = getSerializedCellValue(
+          childRowData,
+          patchedCol,
+          columns.indexOf(col),
+          id,
+          apiRef,
+          defaultValueOptionsFormulae,
+          options,
+          dataValidation,
+          mergedCells,
+          hasColSpan,
+        );
+        combinedRow[col.field] = cellValue ?? '';
+      });
+
+      rows.push({
+        row: combinedRow,
+        dataValidation: {},
+        outlineLevel: rowNode.depth,
+        mergedCells: [],
       });
     }
 
-    let cellValue: string | undefined;
+    return rows;
+  }
 
-    switch (column.type) {
-      case 'singleSelect': {
-        const castColumn = column as GridSingleSelectColDef;
-        if (typeof castColumn.valueOptions === 'function') {
-          // If value option depends on the row, set specific options to the cell
-          // This dataValidation is buggy with LibreOffice and does not allow to have coma
-          const valueOptions = castColumn.valueOptions({
-            id,
-            row,
-            field: column.field,
-          });
-
-          let formulae: string = '"';
-          getFormattedValueOptions(
-            castColumn,
-            row,
-            valueOptions,
-            apiRef.current,
-            (value, index) => {
-              const formatted = value.toString().replace(commaRegex, commaReplacement);
-              formulae += formatted;
-              if (index < valueOptions.length - 1) {
-                formulae += ',';
-              }
-            },
-          );
-          formulae += '"';
-
-          dataValidation[castColumn.field] = {
-            type: 'list',
-            allowBlank: true,
-            formulae: [formulae],
-          };
-        } else {
-          const address = defaultValueOptionsFormulae[column.field].address;
-
-          // If value option is defined for the column, refer to another sheet
-          dataValidation[castColumn.field] = {
-            type: 'list',
-            allowBlank: true,
-            formulae: [address],
-          };
-        }
-
-        const formattedValue = apiRef.current.getRowFormattedValue(row, castColumn);
-        if (process.env.NODE_ENV !== 'production') {
-          if (String(formattedValue) === '[object Object]') {
-            warnOnce([
-              'MUI X: When the value of a field is an object or a `renderCell` is provided, the Excel export might not display the value correctly.',
-              'You can provide a `valueFormatter` with a string representation to be used.',
-            ]);
-          }
-        }
-        if (isObject<{ label: any }>(formattedValue)) {
-          serializedRow[castColumn.field] = formattedValue?.label;
-        } else {
-          serializedRow[castColumn.field] = formattedValue as any;
-        }
-        break;
-      }
-      case 'boolean':
-      case 'number':
-        cellValue = apiRef.current.getRowValue(row, column);
-        break;
-      case 'date':
-      case 'dateTime': {
-        // Excel does not do any timezone conversion, so we create a date using UTC instead of local timezone
-        // Solution from: https://github.com/exceljs/exceljs/issues/486#issuecomment-432557582
-        // About Date.UTC(): https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/UTC#exemples
-        const value = apiRef.current.getRowValue(row, column) as Date;
-        // value may be `undefined` in auto-generated grouping rows
-        if (!value) {
-          break;
-        }
-        const utcDate = new Date(
-          Date.UTC(
-            value.getFullYear(),
-            value.getMonth(),
-            value.getDate(),
-            value.getHours(),
-            value.getMinutes(),
-            value.getSeconds(),
-          ),
-        );
-        serializedRow[column.field] = utcDate;
-        break;
-      }
-      case 'actions':
-        break;
-      default:
-        cellValue = apiRef.current.getRowFormattedValue(row, column);
-        if (process.env.NODE_ENV !== 'production') {
-          if (String(cellValue) === '[object Object]') {
-            warnOnce([
-              'MUI X: When the value of a field is an object or a `renderCell` is provided, the Excel export might not display the value correctly.',
-              'You can provide a `valueFormatter` with a string representation to be used.',
-            ]);
-          }
-        }
-        break;
-    }
-
-    if (typeof cellValue === 'string' && options.escapeFormulas) {
-      // See https://owasp.org/www-community/attacks/CSV_Injection
-      if (['=', '+', '-', '@', '\t', '\r'].includes(cellValue[0])) {
-        cellValue = `'${cellValue}`;
-      }
-    }
-
-    if (typeof cellValue !== 'undefined') {
-      serializedRow[column.field] = cellValue;
-    }
+  // Regular row: all columns
+  const serializedRow: SerializedRow['row'] = {};
+  columns.forEach((column, colIndex) => {
+    serializedRow[column.field] = getSerializedCellValue(
+      row,
+      column,
+      colIndex,
+      id,
+      apiRef,
+      defaultValueOptionsFormulae,
+      options,
+      dataValidation,
+      mergedCells,
+      hasColSpan,
+    );
   });
 
   return {
@@ -309,6 +447,7 @@ interface BuildExcelOptions
   columns: GridStateColDef[];
   rowIds: GridRowId[];
   columnsStyles?: ColumnsStylesInterface;
+  customSerializeColumns?: typeof serializeColumns;
 }
 
 export async function buildExcel(
@@ -323,6 +462,7 @@ export async function buildExcel(
     valueOptionsSheetName = 'Options',
     exceljsPreProcess,
     exceljsPostProcess,
+    customSerializeColumns,
     columnsStyles = {},
   } = options;
 
@@ -330,7 +470,9 @@ export async function buildExcel(
   const workbook: Excel.Workbook = new excelJS.Workbook();
   const worksheet = workbook.addWorksheet('Sheet1');
 
-  const serializedColumns = serializeColumns(columns, columnsStyles);
+  const serializedColumns = customSerializeColumns
+    ? customSerializeColumns(columns, columnsStyles)
+    : serializeColumns(columns, columnsStyles);
   worksheet.columns = serializedColumns;
 
   if (exceljsPreProcess) {
@@ -355,6 +497,7 @@ export async function buildExcel(
   }
 
   if (includeHeaders) {
+    // Add headers for ALL columns (parent + child)
     worksheet.addRow(columns.map((column) => column.headerName ?? column.field));
   }
 
@@ -367,8 +510,12 @@ export async function buildExcel(
 
   apiRef.current.resetColSpan();
   rowIds.forEach((id) => {
-    const serializedRow = serializeRowUnsafe(id, columns, apiRef, valueOptionsData, options);
-    addSerializedRowToWorksheet(serializedRow, worksheet);
+    const serialized = serializeRowUnsafe(id, columns, apiRef, valueOptionsData, options);
+    if (Array.isArray(serialized)) {
+      serialized.forEach((row) => addSerializedRowToWorksheet(row, worksheet));
+    } else {
+      addSerializedRowToWorksheet(serialized, worksheet);
+    }
   });
   apiRef.current.resetColSpan();
 

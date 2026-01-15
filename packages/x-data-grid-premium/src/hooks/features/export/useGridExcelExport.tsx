@@ -55,6 +55,7 @@ export const useGridExcelExport = (
       return buildExcel(
         {
           columns: exportedColumns,
+          customSerializeColumns: options.customSerializeColumns,
           rowIds: exportedRowIds,
           includeHeaders: options.includeHeaders ?? true,
           includeColumnGroupsHeaders: options.includeColumnGroupsHeaders ?? true,
@@ -80,6 +81,7 @@ export const useGridExcelExport = (
         includeHeaders,
         getRowsToExport = defaultGetRowsToExport,
         valueOptionsSheetName = 'Options',
+        customSerializeColumns,
         ...cloneableOptions
       } = options;
 
@@ -141,7 +143,9 @@ export const useGridExcelExport = (
         apiRef.current,
       );
 
-      const serializedColumns = serializeColumns(exportedColumns, options.columnsStyles || {});
+      const serializedColumns = customSerializeColumns
+        ? customSerializeColumns(exportedColumns, options.columnsStyles || {})
+        : serializeColumns(exportedColumns, options.columnsStyles || {});
 
       apiRef.current.resetColSpan();
       const serializedRows: SerializedRow[] = [];
@@ -150,7 +154,12 @@ export const useGridExcelExport = (
         const serializedRow = serializeRowUnsafe(id, exportedColumns, apiRef, valueOptionsData, {
           escapeFormulas: options.escapeFormulas ?? true,
         });
-        serializedRows.push(serializedRow);
+        if (Array.isArray(serializedRow)) {
+          serializedRow.forEach((row) => serializedRows.push(row));
+        } else {
+          serializedRows.push(serializedRow);
+        }
+        // serializedRows.push(serializedRow);
       }
       apiRef.current.resetColSpan();
 
