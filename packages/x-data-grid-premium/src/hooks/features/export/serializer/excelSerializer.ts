@@ -307,10 +307,15 @@ export const serializeRowUnsafe = (
 
       // Add child columns (specific data for this child row)
       childColumns.forEach((col) => {
-        // If the field is dot-notated, use only the last part for the child row
+        // If the field is dot-notated, use the path after the array field
         const fieldParts = col.field.split('.');
-        const childField = fieldParts[fieldParts.length - 1];
-        const patchedCol = { ...col, field: childField };
+        const arrayFieldIndex = fieldParts.indexOf(arrayField);
+
+        // Get the nested path after the array field (e.g., "something.nested" from "verksamhetsInnehall.something.nested")
+        const nestedPath = fieldParts.slice(arrayFieldIndex + 1).join('.');
+
+        // Create a patched column with the nested path as the field
+        const patchedCol = { ...col, field: nestedPath };
 
         const cellValue = getSerializedCellValue(
           childRowData,
